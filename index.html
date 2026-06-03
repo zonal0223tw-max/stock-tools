@@ -5,19 +5,20 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
 <title>看股工具</title>
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="看股工具">
 <meta name="theme-color" content="#bf5a2f" id="themeColorMeta">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon.svg">
 <!--
 ═══════════════════════════════════════════════════════════════════════════
-  看股工具站 · 首頁 launchpad
+  看股工具站 · 首頁（手機桌面 / springboard 風格）
   ─────────────────────────────────────────────────────────────────────────
-  · 工具列 data-driven（TOOLS 陣列，加工具 = 加一筆）
-  · 主題控制台：外觀(亮/暗) · 漲跌配色(台股紅漲綠跌 ⇄ 國際綠漲紅跌) · 主題色板
+  · 每個工具 = 一個可點開的 App 圖示（squircle + motif + 名稱）
+  · 工具 data-driven：TOOLS 陣列加一筆 = 桌面多一個 App 圖示
+  · 主題設定收進右上齒輪 → 底部 drawer：外觀(亮/暗)·漲跌配色(台股⇄國際)·主題色
     → 寫 localStorage 'stk_theme'，每個工具頁讀同一把鑰匙，全站同步
-  · PWA：加到主畫面離線可用（borrow receipt-log 的 manifest/sw/icon 範式）
+  · PWA：加到主畫面，就是真的一個 App（borrow receipt-log shell）
 ═══════════════════════════════════════════════════════════════════════════
 -->
 <style>
@@ -34,97 +35,112 @@
   html[data-dark="1"][data-palette="tw"]{ --up:#ff5a5a; --down:#37c977; }
   html[data-dark="1"][data-palette="intl"]{ --up:#37c977; --down:#ff5a5a; }
   *{box-sizing:border-box}
-  html,body{margin:0}
+  html,body{margin:0;min-height:100%}
   body{color:var(--ink);font-family:var(--sans);background:var(--bg);
-    background-image:radial-gradient(color-mix(in srgb,var(--accent) 8%,transparent) 1px,transparent 1px);background-size:22px 22px;
-    -webkit-font-smoothing:antialiased;transition:background .2s,color .2s;
+    -webkit-font-smoothing:antialiased;min-height:100dvh;
+    background-image:
+      radial-gradient(120% 80% at 50% -10%, color-mix(in srgb,var(--accent) 18%,transparent), transparent 60%),
+      radial-gradient(color-mix(in srgb,var(--ink) 5%,transparent) 1px,transparent 1px);
+    background-size:auto, 24px 24px;
+    transition:background .25s,color .2s;
     padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
-  .wrap{max-width:760px;margin:0 auto;padding:26px 16px 48px}
+  .wrap{max-width:600px;margin:0 auto;padding:24px 18px 40px;min-height:100dvh;display:flex;flex-direction:column}
 
-  header{margin-bottom:18px}
-  .brand{font:700 11px/1 var(--sans);letter-spacing:.2em;color:var(--accent);text-transform:uppercase}
-  h1{font:800 30px/1.1 var(--serif);margin:9px 0 6px}
-  .sub{font:400 13px/1.6 var(--sans);color:var(--muted);margin:0;max-width:460px}
+  /* ── 頂列（像 App 桌面標題列） ── */
+  .bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+  .bar .hi{font:700 12px var(--sans);letter-spacing:.16em;color:var(--accent);text-transform:uppercase}
+  .gear{width:40px;height:40px;border:0;background:color-mix(in srgb,var(--panel) 70%,transparent);backdrop-filter:blur(6px);
+    border:1px solid var(--line);border-radius:50%;cursor:pointer;font-size:18px;line-height:1;color:var(--ink);display:flex;align-items:center;justify-content:center}
+  .gear:active{transform:scale(.92)}
+  h1{font:800 30px/1.1 var(--serif);margin:6px 0 4px}
+  .sub{font:400 13px/1.6 var(--sans);color:var(--muted);margin:0 0 26px;max-width:420px}
 
-  /* ── 主題控制台 ── */
-  .console{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:15px 16px;margin-bottom:22px;box-shadow:0 10px 26px rgba(80,60,30,.05)}
-  .ctitle{font:700 11px var(--sans);letter-spacing:.05em;color:var(--muted);text-transform:uppercase;margin-bottom:13px;display:flex;align-items:center;gap:7px}
-  .crow{display:flex;align-items:center;gap:12px;margin-bottom:13px;flex-wrap:wrap}
+  /* ── App 圖示桌面 ── */
+  .home{display:grid;grid-template-columns:repeat(4,1fr);gap:22px 10px;align-content:start}
+  @media(max-width:380px){.home{grid-template-columns:repeat(3,1fr)}}
+  .app{display:flex;flex-direction:column;align-items:center;gap:8px;text-decoration:none;color:inherit;-webkit-tap-highlight-color:transparent}
+  .icon{position:relative;width:100%;max-width:74px;aspect-ratio:1;border-radius:23%;
+    box-shadow:0 8px 20px rgba(80,50,20,.22), inset 0 1px 0 rgba(255,255,255,.25);
+    overflow:hidden;transition:transform .14s}
+  .app:active .icon{transform:scale(.9)}
+  .icon svg{position:absolute;inset:0;width:100%;height:100%}
+  .icon .gloss{position:absolute;inset:0;background:linear-gradient(160deg,rgba(255,255,255,.28),transparent 42%)}
+  .app .label{font:600 12px/1.25 var(--sans);text-align:center;max-width:84px;
+    overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .app.soon .icon{box-shadow:none;border:2px dashed var(--line);background:transparent;display:flex;align-items:center;justify-content:center}
+  .app.soon .icon .plus{font:200 30px var(--sans);color:var(--muted)}
+  .app.soon .label{color:var(--muted)}
+
+  .spacer{flex:1;min-height:20px}
+  .foot{font:400 11px/1.7 var(--sans);color:var(--muted);text-align:center;margin-top:24px}
+  .foot b{color:var(--accent2)}
+
+  /* ── 設定 drawer ── */
+  .backdrop{position:fixed;inset:0;background:rgba(20,14,8,.42);opacity:0;pointer-events:none;transition:.22s;z-index:30;backdrop-filter:blur(2px)}
+  .backdrop.on{opacity:1;pointer-events:auto}
+  .drawer{position:fixed;left:0;right:0;bottom:0;z-index:31;background:var(--panel);
+    border-top-left-radius:22px;border-top-right-radius:22px;border-top:1px solid var(--line);
+    box-shadow:0 -12px 40px rgba(40,25,10,.22);padding:10px 20px calc(24px + env(safe-area-inset-bottom));
+    transform:translateY(110%);transition:transform .28s cubic-bezier(.3,.8,.3,1);max-width:600px;margin:0 auto}
+  .drawer.on{transform:translateY(0)}
+  .grip{width:40px;height:5px;border-radius:3px;background:var(--line);margin:4px auto 16px}
+  .dtitle{font:700 11px var(--sans);letter-spacing:.05em;color:var(--muted);text-transform:uppercase;margin-bottom:14px}
+  .crow{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
   .crow:last-child{margin-bottom:0}
-  .ckey{font:600 12px var(--sans);color:var(--ink);width:60px;flex:none}
-  .seg{display:flex;gap:5px;flex:1;min-width:180px}
-  .seg button{flex:1;font:600 12px var(--sans);padding:9px 4px;border:1px solid var(--line);background:var(--bg);border-radius:9px;cursor:pointer;color:var(--ink);transition:.14s;line-height:1.25}
+  .ckey{font:600 13px var(--sans);color:var(--ink);width:58px;flex:none}
+  .seg{display:flex;gap:6px;flex:1;min-width:190px}
+  .seg button{flex:1;font:600 13px var(--sans);padding:11px 4px;border:1px solid var(--line);background:var(--bg);border-radius:11px;cursor:pointer;color:var(--ink);transition:.14s;line-height:1.25}
   .seg button small{display:block;font:500 10px var(--sans);color:var(--muted);margin-top:1px}
-  .seg button.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent)}
+  .seg button.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 13%,transparent)}
   .seg button.on small{color:var(--accent)}
   .updemo{display:flex;gap:6px;margin-left:auto;flex:none}
-  .updemo span{font:700 12px var(--mono);padding:3px 9px;border-radius:7px}
-  .updemo .u{color:var(--up);background:color-mix(in srgb,var(--up) 14%,transparent)}
-  .updemo .d{color:var(--down);background:color-mix(in srgb,var(--down) 14%,transparent)}
-  .swatches{display:flex;gap:9px;flex:1}
-  .swatches button{width:30px;height:30px;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0;transition:.14s}
-  .swatches button.on{border-color:var(--ink);transform:scale(1.12)}
-
-  /* ── 工具網格 ── */
-  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr));gap:16px}
-  .card{display:block;text-decoration:none;color:inherit;background:var(--panel);border:1px solid var(--line);border-radius:16px;overflow:hidden;box-shadow:0 10px 26px rgba(80,60,30,.06);transition:.18s}
-  .card:active{transform:scale(.985)}
-  .card:hover{border-color:var(--accent);box-shadow:0 16px 34px rgba(80,60,30,.13)}
-  .thumb{position:relative;aspect-ratio:16/12;background:var(--bg);overflow:hidden;border-bottom:1px solid var(--line)}
-  .thumb iframe{position:absolute;inset:0;width:100%;height:100%;border:0;pointer-events:none;transform:scale(1.01)}
-  .thumb .ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font:500 12px var(--sans);color:var(--muted)}
-  .cbody{padding:14px 15px 16px}
-  .ctop{display:flex;align-items:center;justify-content:space-between;gap:8px}
-  .ctop h3{font:700 17px var(--serif);margin:0}
-  .live{font:700 9px var(--mono);letter-spacing:.06em;padding:3px 7px;border-radius:12px;color:var(--down);background:color-mix(in srgb,var(--down) 14%,transparent)}
-  .cen{font:italic 500 12px var(--serif);color:var(--accent);margin:3px 0 8px}
-  .cdesc{font:400 12px/1.6 var(--sans);color:var(--muted);margin:0}
-
-  .soon{border:1px dashed var(--line);border-radius:16px;background:transparent;padding:22px 18px;display:flex;flex-direction:column;justify-content:center;gap:8px}
-  .soon .si{font:200 30px var(--sans);color:var(--accent);line-height:1}
-  .soon h3{font:700 14px var(--serif);margin:0}
-  .soon p{font:400 11px/1.6 var(--sans);color:var(--muted);margin:0}
-
-  .foot{margin-top:26px;font:400 11px/1.7 var(--sans);color:var(--muted);text-align:center}
-  .foot b{color:var(--accent2)}
+  .updemo span{font:700 12px var(--mono);padding:4px 10px;border-radius:8px}
+  .updemo .u{color:var(--up);background:color-mix(in srgb,var(--up) 15%,transparent)}
+  .updemo .d{color:var(--down);background:color-mix(in srgb,var(--down) 15%,transparent)}
+  .swatches{display:flex;gap:11px;flex:1}
+  .swatches button{width:32px;height:32px;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0;transition:.14s;box-shadow:0 2px 6px rgba(0,0,0,.12)}
+  .swatches button.on{border-color:var(--ink);transform:scale(1.14)}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <header>
-    <div class="brand">STOCK TOOLS · 看股工具</div>
-    <h1>看股工具</h1>
-    <p class="sub">股號就是一切——不選券商、不背中文全名。手機開、加到主畫面離線可用。</p>
-  </header>
+  <div class="bar">
+    <span class="hi" id="hi">STOCK TOOLS</span>
+    <button class="gear" id="gear" title="外觀設定" aria-label="外觀設定">⚙︎</button>
+  </div>
+  <h1>看股工具</h1>
+  <p class="sub">點圖示打開。股號就是一切——不選券商、不背中文全名。</p>
 
-  <!-- ════ 主題控制台 ════ -->
-  <section class="console">
-    <div class="ctitle">⚙︎ 外觀設定 · 全站同步</div>
-    <div class="crow">
-      <span class="ckey">外觀</span>
-      <div class="seg" id="segDark">
-        <button data-v="0">☀︎ 淺色</button>
-        <button data-v="1">☾ 深色</button>
-      </div>
-    </div>
-    <div class="crow">
-      <span class="ckey">漲跌色</span>
-      <div class="seg" id="segPalette">
-        <button data-v="tw">台股<small>紅漲 綠跌</small></button>
-        <button data-v="intl">國際<small>綠漲 紅跌</small></button>
-      </div>
-      <div class="updemo"><span class="u" id="demoUp">▲ 漲</span><span class="d" id="demoDown">▼ 跌</span></div>
-    </div>
-    <div class="crow">
-      <span class="ckey">主題色</span>
-      <div class="swatches" id="swatches"></div>
-    </div>
-  </section>
+  <div class="home" id="home"></div>
 
-  <!-- ════ 工具列 ════ -->
-  <div class="grid" id="grid"></div>
+  <div class="spacer"></div>
+  <p class="foot">報價走公開 proxy（只送股號）· 設定與清單存你手機本機 · <b>加到主畫面</b>就是離線 App</p>
+</div>
 
-  <p class="foot">資料走公開報價 proxy（只送股號出門）· 設定與清單存在你手機本機 · <b>加到主畫面</b>離線可用</p>
+<!-- 設定 drawer -->
+<div class="backdrop" id="backdrop"></div>
+<div class="drawer" id="drawer">
+  <div class="grip"></div>
+  <div class="dtitle">⚙︎ 外觀設定 · 全站同步</div>
+  <div class="crow">
+    <span class="ckey">外觀</span>
+    <div class="seg" id="segDark">
+      <button data-v="0">☀︎ 淺色</button>
+      <button data-v="1">☾ 深色</button>
+    </div>
+  </div>
+  <div class="crow">
+    <span class="ckey">漲跌色</span>
+    <div class="seg" id="segPalette">
+      <button data-v="tw">台股<small>紅漲 綠跌</small></button>
+      <button data-v="intl">國際<small>綠漲 紅跌</small></button>
+    </div>
+    <div class="updemo"><span class="u">▲ 漲</span><span class="d">▼ 跌</span></div>
+  </div>
+  <div class="crow">
+    <span class="ckey">主題色</span>
+    <div class="swatches" id="swatches"></div>
+  </div>
 </div>
 
 <script>
@@ -147,7 +163,6 @@ function applyTheme(){
   r.setAttribute('data-palette', t.palette==='intl'?'intl':'tw');
   var ac=ACCENTS.filter(function(x){return x.k===t.accentKey;})[0]||ACCENTS[0];
   r.style.setProperty('--accent',ac.a); r.style.setProperty('--accent2',ac.a2);
-  // 把選定色值寫回 theme，讓工具頁（讀 t.accent 色值）也能同步主題色
   if(t.accentKey!==ac.k||t.accent!==ac.a||t.accent2!==ac.a2){ t.accentKey=ac.k; t.accent=ac.a; t.accent2=ac.a2; saveTheme(t); }
   var meta=document.getElementById('themeColorMeta'); if(meta) meta.setAttribute('content', t.dark?'#15130f':ac.a);
   syncConsole(t,ac);
@@ -156,7 +171,7 @@ function syncConsole(t,ac){
   [].forEach.call(document.querySelectorAll('#segDark button'),function(b){ b.classList.toggle('on', b.dataset.v===(t.dark?'1':'0')); });
   var pal=t.palette==='intl'?'intl':'tw';
   [].forEach.call(document.querySelectorAll('#segPalette button'),function(b){ b.classList.toggle('on', b.dataset.v===pal); });
-  [].forEach.call(document.querySelectorAll('#swatches button'),function(b){ b.classList.toggle('on', b.dataset.k===(ac.k)); });
+  [].forEach.call(document.querySelectorAll('#swatches button'),function(b){ b.classList.toggle('on', b.dataset.k===ac.k); });
 }
 function buildSwatches(){
   var box=document.getElementById('swatches');
@@ -169,36 +184,46 @@ function bindConsole(){
 }
 window.addEventListener('storage',function(e){ if(e.key===THEME_KEY) applyTheme(); });
 
-/* ════ 工具列（data-driven：加工具 = 加一筆） ════ */
+/* ════ drawer 開關 ════ */
+function openDrawer(o){ document.getElementById('drawer').classList.toggle('on',o); document.getElementById('backdrop').classList.toggle('on',o); }
+function bindDrawer(){
+  document.getElementById('gear').addEventListener('click',function(){ openDrawer(!document.getElementById('drawer').classList.contains('on')); });
+  document.getElementById('backdrop').addEventListener('click',function(){ openDrawer(false); });
+}
+
+/* ════ 工具桌面（data-driven：加工具 = 桌面多一個 App 圖示） ════
+   icon = 白色 motif on 工具識別底色；bg = squircle 漸層底。 */
 var TOOLS=[
-  { title:'相對大盤比較', en:'Relative to Market', folder:'compare', live:true,
-    desc:'輸入股號就好，全部 rebase 跟 0050 大盤比——誰跑贏、誰累積落後大盤，一張疊圖看穿。' }
+  { title:'相對大盤比較', folder:'compare',
+    bg:'linear-gradient(150deg,#d8743f,#a6432a)',
+    icon:'<svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">'+
+      '<line x1="16" y1="60" x2="84" y2="60" stroke="#fff" stroke-width="3.5" stroke-dasharray="0.5 7" stroke-linecap="round" opacity=".55"/>'+
+      '<path d="M16 67 L38 61 L60 65 L84 71" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" opacity=".4"/>'+
+      '<path d="M16 63 L38 48 L60 53 L84 24" stroke="#fff" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>'+
+      '<circle cx="84" cy="24" r="6" fill="#fff"/></svg>' }
 ];
-function buildGrid(){
-  var grid=document.getElementById('grid');
+function buildHome(){
+  var home=document.getElementById('home');
   TOOLS.forEach(function(t){
-    var a=document.createElement('a'); a.className='card'; a.href=t.folder+'/index.html';
-    a.innerHTML=
-      '<div class="thumb"><div class="ph">載入預覽…</div>'+
-        '<iframe loading="lazy" src="'+t.folder+'/index.html?embed=1" title="'+t.title+' 預覽" tabindex="-1" scrolling="no"></iframe>'+
-      '</div>'+
-      '<div class="cbody"><div class="ctop"><h3>'+t.title+'</h3>'+(t.live?'<span class="live">LIVE 報價</span>':'')+'</div>'+
-        '<div class="cen">'+t.en+'</div><p class="cdesc">'+t.desc+'</p></div>';
-    grid.appendChild(a);
+    var a=document.createElement('a'); a.className='app'; a.href=t.folder+'/index.html';
+    a.innerHTML='<span class="icon" style="background:'+t.bg+'">'+t.icon+'<span class="gloss"></span></span>'+
+                '<span class="label">'+t.title+'</span>';
+    home.appendChild(a);
   });
-  // 籌備磚
-  var soon=document.createElement('div'); soon.className='soon';
-  soon.innerHTML='<div class="si">＋</div><h3>更多工具籌備中</h3><p>同一個站、同一套外觀設定。下一支工具會直接出現在這列。</p>';
-  grid.appendChild(soon);
+  // 籌備佔位（暗示可擴充，點了不動作）
+  var soon=document.createElement('div'); soon.className='app soon';
+  soon.innerHTML='<span class="icon"><span class="plus">＋</span></span><span class="label">更多籌備中</span>';
+  home.appendChild(soon);
 }
 
 /* ════ 啟動 ════ */
-buildSwatches(); bindConsole(); buildGrid(); applyTheme();
+buildSwatches(); bindConsole(); bindDrawer(); buildHome(); applyTheme();
 if('serviceWorker' in navigator && location.protocol.startsWith('http'))
   window.addEventListener('load',function(){ navigator.serviceWorker.register('sw.js').catch(function(){}); });
 
 /* 測試鉤子 */
-window.__home={ theme:function(){return loadTheme();}, tools:function(){return TOOLS.map(function(t){return t.folder;});} };
+window.__home={ theme:function(){return loadTheme();}, tools:function(){return TOOLS.map(function(t){return t.folder;});},
+  openDrawer:function(o){openDrawer(o);return document.getElementById('drawer').classList.contains('on');} };
 </script>
 </body>
 </html>

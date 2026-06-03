@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
+<title>相對大盤比較 · 看股工具</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="看股工具">
+<meta name="theme-color" content="#bf5a2f">
+<link rel="manifest" href="../manifest.json">
+<link rel="apple-touch-icon" href="../icon.svg">
+<!--
+═══════════════════════════════════════════════════════════════════════════
+  相對大盤比較圖 · Relative-to-Market  (看股工具站 · 工具 1)
+  ─────────────────────────────────────────────────────────────────────────
+  靈魂(A)：MoneyDJ 把「累積落後大盤」藏到找不到，還逼你選券商/中文全名。
+           我們：股號是唯一入口、0050 是固定基準線、全部 rebase 到同一起點
+           疊成一張圖——誰跑贏/落後大盤一眼看穿。
+  揭穿(borrow flight-map / cut-loss-overlay)：
+    · 模式「超越大盤」= 個股 rebased − 0050 rebased，0050 拉平成零基準線；
+      線在零線下 = 累積落後大盤（← 使用者要的）。
+    · 模式「漲幅」    = 各檔自己 rebase 到 100，看誰漲多（絕對表現會騙人）。
+  資料(D 湧現·真假不混)：
+    · LIVE  = Yahoo chart API（proxy 移植自 stock-vault）日線，多檔按日期對齊
+    · DEMO  = seeded GBM（借 stock-band），?embed=1 強制 DEMO 當封面、不發網路請求
+  recombine：stock-vault(proxiedJSON/ysym/tpeDate/lag-fix) + stock-band(SVG 折線/__model)
+  零相依單檔 · 主題讀 localStorage 全站同步 · ?embed=1 縮圖。
+═══════════════════════════════════════════════════════════════════════════
+-->
+<style>
+  :root{
+    --bg:#f3ede1; --panel:#fbf8f1; --ink:#2c2620; --muted:#9a8f7d;
+    --line:#e4dac7; --accent:#bf5a2f; --accent2:#a64824;
+    --up:#d92e2e; --down:#1f9d55;        /* 預設台股 palette：紅漲綠跌 */
+    --sans:"PingFang TC","Microsoft JhengHei","微軟正黑體","Noto Sans TC",-apple-system,system-ui,"Helvetica Neue",Arial,sans-serif;
+    --serif:"PingFang TC","Microsoft JhengHei","微軟正黑體","Noto Sans TC",-apple-system,system-ui,sans-serif;
+    --mono:ui-monospace,Menlo,Consolas,"Roboto Mono",monospace;
+  }
+  /* ── palette：國際慣例 綠漲紅跌 ── */
+  html[data-palette="intl"]{ --up:#1f9d55; --down:#d92e2e; }
+  /* ── dark 模式 ── */
+  html[data-dark="1"]{
+    --bg:#15130f; --panel:#211d17; --ink:#f0e9dc; --muted:#998f7d;
+    --line:#3a332a; --accent:#e0813f; --accent2:#cf6f30;
+  }
+  html[data-dark="1"][data-palette="tw"]{ --up:#ff5a5a; --down:#37c977; }
+  html[data-dark="1"][data-palette="intl"]{ --up:#37c977; --down:#ff5a5a; }
+
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{color:var(--ink);font-family:var(--sans);background:var(--bg);
+    -webkit-font-smoothing:antialiased;
+    padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    transition:background .2s,color .2s}
+  .wrap{max-width:780px;margin:0 auto;padding:16px 14px 40px}
+
+  /* ── 頁首 ── */
+  .top{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+  .back{font:600 13px var(--sans);color:var(--muted);text-decoration:none;flex:none}
+  .back:hover{color:var(--accent)}
+  h1{font:700 21px/1.15 var(--serif);margin:0;flex:1}
+  .themebtn{flex:none;width:38px;height:38px;border:1px solid var(--line);background:var(--panel);
+    border-radius:11px;cursor:pointer;font-size:17px;line-height:1;color:var(--ink)}
+  .themebtn:active{transform:scale(.94)}
+  .baseinfo{font:500 12px var(--sans);color:var(--muted);margin:0 0 14px}
+  .baseinfo b{color:var(--accent)}
+
+  /* ── 模式揭穿切換 ── */
+  .modeseg{display:flex;gap:0;background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:4px;margin-bottom:12px}
+  .modeseg button{flex:1;font:700 14px var(--sans);padding:11px 0;border:0;background:transparent;border-radius:9px;cursor:pointer;color:var(--muted);transition:.15s;display:flex;flex-direction:column;align-items:center;gap:2px}
+  .modeseg button small{font:500 10px var(--sans);opacity:.8}
+  .modeseg button.on{background:var(--accent);color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.12)}
+  .modeseg button.on small{opacity:.92}
+
+  /* ── 圖 ── */
+  .stage{background:var(--panel);border:1px solid var(--line);border-radius:15px;padding:12px 12px 8px;position:relative;overflow:hidden}
+  .stage.loading::after{content:"抓取報價中…";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    background:color-mix(in srgb,var(--panel) 80%,transparent);font:600 13px var(--sans);color:var(--muted);z-index:3}
+  svg.chart{width:100%;height:auto;display:block;touch-action:pan-y}
+  .srcbadge{position:absolute;top:10px;right:12px;font:600 10px var(--mono);letter-spacing:.04em;
+    padding:3px 8px;border-radius:20px;z-index:2}
+  .srcbadge.live{background:color-mix(in srgb,var(--down) 18%,transparent);color:var(--down)}
+  .srcbadge.demo{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent)}
+  .rangeseg{display:flex;gap:6px;margin:12px 0}
+  .rangeseg button{flex:1;font:600 12px var(--sans);padding:8px 0;border:1px solid var(--line);background:var(--panel);border-radius:9px;cursor:pointer;color:var(--ink);transition:.14s}
+  .rangeseg button.on{background:var(--ink);border-color:var(--ink);color:var(--bg)}
+
+  /* ── 排行摘要 ── */
+  .board{margin-top:6px;border:1px solid var(--line);border-radius:13px;overflow:hidden;background:var(--panel)}
+  .row{display:flex;align-items:center;gap:10px;padding:11px 13px;border-top:1px solid var(--line);cursor:pointer}
+  .row:first-child{border-top:0}
+  .row.base{background:color-mix(in srgb,var(--accent) 7%,transparent)}
+  .swatch{width:11px;height:11px;border-radius:3px;flex:none}
+  .rname{flex:1;min-width:0}
+  .rname b{font:600 14px var(--sans);display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .rname small{font:500 11px var(--mono);color:var(--muted);letter-spacing:.03em}
+  .rval{font:700 16px var(--mono);font-variant-numeric:tabular-nums;text-align:right;flex:none}
+  .rval.up{color:var(--up)}.rval.down{color:var(--down)}
+  .rval small{display:block;font:500 10px var(--sans);color:var(--muted);margin-top:1px}
+  .rdel{flex:none;width:26px;height:26px;border:0;background:transparent;color:var(--muted);font-size:16px;cursor:pointer;border-radius:7px}
+  .rdel:hover{background:color-mix(in srgb,var(--down) 14%,transparent);color:var(--down)}
+  .row.base .rdel{visibility:hidden}
+
+  /* ── 加股號 ── */
+  .addbar{display:flex;gap:8px;margin-top:12px}
+  .addbar input{flex:1;font:600 15px var(--mono);padding:11px 13px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:11px;letter-spacing:.05em}
+  .addbar input::placeholder{color:var(--muted);font-weight:500;letter-spacing:0}
+  .addbar input:focus{outline:0;border-color:var(--accent)}
+  .addbar button{flex:none;font:700 14px var(--sans);padding:0 18px;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:11px;cursor:pointer}
+  .addbar button:active{transform:scale(.96)}
+  .hint{font:400 11px/1.6 var(--sans);color:var(--muted);margin:10px 2px 0}
+  .hint b{color:var(--accent2)}
+  .err{color:var(--down);font-weight:600}
+
+  .foot{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
+  .foot button{font:600 12px var(--sans);padding:9px 14px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:10px;cursor:pointer}
+  .foot button:hover{border-color:var(--accent);color:var(--accent)}
+  .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);background:var(--ink);color:var(--bg);font:600 12px var(--sans);padding:10px 18px;border-radius:22px;opacity:0;pointer-events:none;transition:.22s;z-index:20}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  /* ── ?embed=1 縮圖 ── */
+  body.embed .wrap{padding:0}
+  body.embed .top,body.embed .baseinfo,body.embed .rangeseg,body.embed .board,
+  body.embed .addbar,body.embed .hint,body.embed .foot,body.embed .modeseg{display:none}
+  body.embed .stage{border:0;border-radius:0;padding:8px 10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <a class="back" href="../index.html" id="back">‹ 工具</a>
+    <h1>相對大盤比較</h1>
+    <button class="themebtn" id="themebtn" title="日夜切換">◐</button>
+  </div>
+  <p class="baseinfo">基準＝<b id="baseLabel">0050</b>　其餘標的全部跟它比，rebase 到同一起點</p>
+
+  <div class="modeseg" id="modeseg">
+    <button data-mode="excess" class="on">超越大盤<small>誰跑贏 / 落後 0050</small></button>
+    <button data-mode="growth">漲幅<small>各自漲多少</small></button>
+  </div>
+
+  <div class="stage" id="stage">
+    <span class="srcbadge demo" id="srcbadge">DEMO</span>
+    <div id="chart"></div>
+  </div>
+
+  <div class="rangeseg" id="rangeseg">
+    <button data-r="1mo">1月</button>
+    <button data-r="3mo">3月</button>
+    <button data-r="6mo" class="on">6月</button>
+    <button data-r="1y">1年</button>
+    <button data-r="ytd">YTD</button>
+  </div>
+
+  <div class="board" id="board"></div>
+
+  <div class="addbar">
+    <input id="addinput" inputmode="numeric" autocomplete="off" placeholder="輸入股號，例如 2330（只要號碼）" maxlength="8">
+    <button id="addbtn">加入</button>
+  </div>
+  <p class="hint" id="hint">只要記<b>股號</b>就好——名字我幫你查（上市自動補 .TW，查不到再試上櫃 .TWO）。基準 0050 固定不可刪。</p>
+
+  <div class="foot">
+    <button id="refresh">🔄 重新抓報價</button>
+    <button id="reset">↺ 回預設清單</button>
+    <button id="copy">⤓ 複製數字</button>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+/* ════════════ 主題：讀 localStorage 全站同步（首頁控制台寫，這裡讀） ════════════ */
+var THEME_KEY='stk_theme';
+function loadTheme(){ try{return JSON.parse(localStorage.getItem(THEME_KEY))||{}}catch(e){return{}} }
+function applyTheme(){
+  var t=loadTheme(), r=document.documentElement;
+  r.setAttribute('data-dark', t.dark?'1':'0');
+  r.setAttribute('data-palette', t.palette==='intl'?'intl':'tw');
+  if(t.accent){ r.style.setProperty('--accent',t.accent); r.style.setProperty('--accent2',t.accent2||t.accent); }
+}
+function toggleDark(){ var t=loadTheme(); t.dark=!t.dark; localStorage.setItem(THEME_KEY,JSON.stringify(t)); applyTheme(); }
+window.addEventListener('storage',function(e){ if(e.key===THEME_KEY) applyTheme(); });
+applyTheme();
+
+/* ════════════ 1 STATE ════════════ */
+var BASE='0050';                                   // 使用者拍板：固定基準
+var DEFAULTS=['2330','2454','0056','00878'];       // 預設對照（台積/聯發科/高股息/永續高息）
+var STATE={ symbols:DEFAULTS.slice(), range:'6mo', mode:'excess', source:'demo' };
+var KEY='stk_compare_v1';
+function saveState(){ try{localStorage.setItem(KEY,JSON.stringify({symbols:STATE.symbols,range:STATE.range,mode:STATE.mode}))}catch(e){} }
+function loadState(){ try{var s=JSON.parse(localStorage.getItem(KEY)); if(s){ if(s.symbols)STATE.symbols=s.symbols; if(s.range)STATE.range=s.range; if(s.mode)STATE.mode=s.mode; }}catch(e){} }
+
+var EMBED=new URLSearchParams(location.search).has('embed');
+
+/* ════════════ 2 報價層：proxy 移植自 stock-vault ════════════ */
+var YH='https://query1.finance.yahoo.com';
+var PROXIES=[
+  function(u){return 'https://corsproxy.io/?url='+encodeURIComponent(u);},
+  function(u){return 'https://api.allorigins.win/raw?url='+encodeURIComponent(u);}
+];
+async function proxiedJSON(yurl){
+  var lastErr;
+  for(var i=0;i<PROXIES.length;i++){
+    try{ var r=await fetch(PROXIES[i](yurl),{cache:'no-store'}); if(!r.ok) throw new Error('HTTP '+r.status); return await r.json(); }
+    catch(e){ lastErr=e; }
+  }
+  throw lastErr||new Error('all proxies failed');
+}
+var TPE=8*3600*1000;
+function tpeDate(ts){ return new Date(ts*1000+TPE).toISOString().slice(0,10); }
+function rangeParam(r){ return r==='ytd' ? 'ytd' : r; }
+
+/* 抓單檔日線 → {map:{date:close}, name, last} ；上市抓不到 fallback 上櫃 .TWO */
+async function fetchSeriesSym(sym,range){
+  var url=YH+'/v8/finance/chart/'+encodeURIComponent(sym)+'?range='+rangeParam(range)+'&interval=1d';
+  var j=await proxiedJSON(url);
+  var res=j.chart && j.chart.result && j.chart.result[0];
+  if(!res || !res.timestamp) throw new Error('no data');
+  var meta=res.meta, ts=res.timestamp, cl=(res.indicators.quote[0]||{}).close||[];
+  var map={}, lastT=null, lastC=null;
+  for(var i=0;i<ts.length;i++){ if(cl[i]!=null){ var d=tpeDate(ts[i]); map[d]=Math.round(cl[i]*1e4)/1e4; lastT=ts[i]; lastC=cl[i]; } }
+  // lag fix：regularMarket 比最後一根日線新 → 補進去（borrow stock-vault）
+  if(meta.regularMarketPrice!=null && meta.regularMarketTime && lastT && tpeDate(meta.regularMarketTime)>tpeDate(lastT)){
+    map[tpeDate(meta.regularMarketTime)]=Math.round(meta.regularMarketPrice*1e4)/1e4;
+  }
+  return { map:map, name:meta.shortName||meta.longName||'', sym:meta.symbol||sym };
+}
+async function fetchSeries(ticker,range){
+  ticker=String(ticker).trim().toUpperCase();
+  var base=ticker.indexOf('.')>=0 ? ticker : ticker;        // 指數如 ^TWII 原樣
+  if(ticker.indexOf('.')<0 && ticker.charAt(0)!=='^'){
+    try{ return await fetchSeriesSym(ticker+'.TW',range); }
+    catch(e){ return await fetchSeriesSym(ticker+'.TWO',range); }   // 上櫃 fallback
+  }
+  return await fetchSeriesSym(base,range);
+}
+
+/* ════════════ DEMO：seeded GBM（借 stock-band），真假不混 ════════════ */
+function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; var t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+function gaussFrom(rng){ var u=0,v=0; while(u===0)u=rng(); while(v===0)v=rng(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
+function hashCode(s){ var h=0; for(var i=0;i<s.length;i++){ h=(h*31+s.charCodeAt(i))>>>0; } return h; }
+/* 台股中文名對照（domain table）：Yahoo 對台股 ETF 只回英文發行商名，
+   使用者「只記股號」→ 內建字典優先補中文，查無才退 Yahoo 名。常見 ETF + 權值股。 */
+var TW_NAMES={
+  '0050':'元大台灣50','006208':'富邦台50','00692':'富邦公司治理','0051':'元大中型100',
+  '0056':'元大高股息','00878':'國泰永續高股息','00919':'群益台灣精選高息','00929':'復華台灣科技優息',
+  '00940':'元大台灣價值高息','00713':'元大台灣高息低波','00701':'國泰股利精選30','00915':'凱基優選高股息',
+  '00900':'富邦特選高股息30','00936':'台新永續高息中小','00939':'統一台灣高息動能','00713':'元大台灣高息低波',
+  '00757':'統一FANG+','00662':'富邦NASDAQ','00646':'元大S&P500','00679B':'元大美債20年',
+  '2330':'台積電','2454':'聯發科','2317':'鴻海','2308':'台達電','2382':'廣達','2303':'聯電',
+  '2412':'中華電','3711':'日月光投控','2357':'華碩','3034':'聯詠','2379':'瑞昱','3045':'台灣大','4904':'遠傳',
+  '2891':'中信金','2881':'富邦金','2882':'國泰金','2886':'兆豐金','2884':'玉山金','2892':'第一金','2885':'元大金',
+  '2603':'長榮','2609':'陽明','2615':'萬海','1301':'台塑','1303':'南亞','2002':'中鋼','3008':'大立光',
+  '2207':'和泰車','1216':'統一','2912':'統一超','2880':'華南金','5880':'合庫金'
+};
+var RANGE_DAYS={'1mo':22,'3mo':64,'6mo':126,'1y':252,'ytd':150};
+function demoSeries(ticker,range){
+  var n=RANGE_DAYS[range]||126;
+  var seed=hashCode(ticker+'|'+range);
+  var rng=mulberry32(seed);
+  // 每檔不同年化趨勢/波動；0050 設成溫和基準，讓其餘有贏有輸
+  var drift = ticker===BASE ? 0.12 : (rng()*0.6-0.18);      // -18%~+42%
+  var vol   = ticker===BASE ? 0.16 : (0.14+rng()*0.30);
+  var muD=drift/252, sgD=vol/Math.sqrt(252);
+  var price=50+rng()*950, map={};
+  var today=new Date(Date.now());
+  for(var i=0;i<n;i++){
+    var z=gaussFrom(rng);
+    price=price*Math.exp(muD-0.5*sgD*sgD+sgD*z);
+    var d=new Date(today.getTime()-(n-1-i)*86400000);
+    map[d.toISOString().slice(0,10)]=Math.round(price*100)/100;
+  }
+  return { map:map, name:TW_NAMES[ticker]||('擬・'+ticker), sym:ticker };
+}
+
+/* 抓全部（含基準）；LIVE 失敗整批退 DEMO */
+async function fetchAll(){
+  var tickers=[BASE].concat(STATE.symbols);
+  if(EMBED){ STATE.source='demo'; var d={}; tickers.forEach(function(t){d[t]=demoSeries(t,STATE.range);}); return d; }
+  var out={}, ok=true;
+  await Promise.all(tickers.map(async function(t){
+    try{ out[t]=await fetchSeries(t,STATE.range); if(!Object.keys(out[t].map).length) throw new Error('empty'); }
+    catch(e){ out[t]={error:(e&&e.message)||'fail'}; ok=false; }
+  }));
+  if(ok){ STATE.source='live'; return out; }
+  // 任何一檔失敗 → 整批 demo（真假不混，不混搭）
+  STATE.source='demo';
+  var dd={}; tickers.forEach(function(t){ dd[t]=demoSeries(t,STATE.range); }); return dd;
+}
+
+/* ════════════ 3 GENERATOR（新核心）：對齊 + rebase + 模式 ════════════ */
+function buildModel(raw){
+  var tickers=[BASE].concat(STATE.symbols.filter(function(t){return t!==BASE;}));
+  // master timeline = 基準(0050) 的交易日
+  var baseSeries=raw[BASE];
+  if(!baseSeries || baseSeries.error || !Object.keys(baseSeries.map||{}).length){
+    return { error:'基準 '+BASE+' 無資料', tickers:[], dates:[] };
+  }
+  var dates=Object.keys(baseSeries.map).sort();
+  // 各檔對 master forward-fill；base=該檔在 master 上第一個有效值
+  var aligned={}, names={};
+  tickers.forEach(function(t){
+    var s=raw[t]; names[t]=TW_NAMES[t]||(s&&s.name)||t;
+    var m=(s&&s.map)||{}, last=null, arr=[];
+    dates.forEach(function(d){ if(m[d]!=null) last=m[d]; arr.push(last); });
+    aligned[t]=arr;
+  });
+  // rebase 到 100（各檔第一個非 null 當基期）
+  var rebased={};
+  tickers.forEach(function(t){
+    var arr=aligned[t], b=null;
+    for(var i=0;i<arr.length;i++){ if(arr[i]!=null){ b=arr[i]; break; } }
+    rebased[t]=arr.map(function(v){ return (v!=null&&b)? v/b*100 : null; });
+  });
+  var baseReb=rebased[BASE];
+  // 模式 → series（畫的值）
+  var series={};
+  tickers.forEach(function(t){
+    if(STATE.mode==='excess'){
+      series[t]=rebased[t].map(function(v,i){ return (v!=null&&baseReb[i]!=null)? v-baseReb[i] : null; });
+    }else{
+      series[t]=rebased[t].map(function(v){ return v!=null? v-100 : null; });
+    }
+  });
+  // 湧現摘要：每檔末端值
+  function lastNN(a){ for(var i=a.length-1;i>=0;i--){ if(a[i]!=null) return a[i]; } return null; }
+  var summary=tickers.map(function(t){
+    return { ticker:t, name:names[t], isBase:t===BASE,
+      excess:lastNN(STATE.mode==='excess'?series[t]:rebased[t].map(function(v,i){return (v!=null&&baseReb[i]!=null)?v-baseReb[i]:null;})),
+      growth:lastNN(rebased[t].map(function(v){return v!=null?v-100:null;})),
+      last:lastNN(aligned[t]) };
+  });
+  // 排序：超越大盤模式按 excess 降冪（基準固定置頂），漲幅模式按 growth 降冪
+  var head=summary.filter(function(s){return s.isBase;});
+  var rest=summary.filter(function(s){return !s.isBase;})
+    .sort(function(a,b){ return (STATE.mode==='excess'? b.excess-a.excess : b.growth-a.growth); });
+  return { tickers:tickers, dates:dates, series:series, rebased:rebased, summary:head.concat(rest), names:names, source:STATE.source };
+}
+
+/* ════════════ 4 RENDERER：SVG 多線疊圖（借 stock-band） ════════════ */
+var COLORS=['#bf5a2f','#3a6ea5','#2e7d52','#9b59b6','#d68a3a','#c0392b','#16a085','#8e44ad'];
+function colorFor(t,i){ return t===BASE ? 'var(--muted)' : COLORS[i%COLORS.length]; }
+function render(model){
+  var chart=document.getElementById('chart');
+  if(model.error){ chart.innerHTML='<div style="padding:30px;text-align:center;color:var(--muted);font:600 13px var(--sans)">'+model.error+'</div>'; window.__model={error:model.error}; return; }
+  var W=720,H=380,padL=8,padR=64,padT=16,padB=22;
+  var plotW=W-padL-padR, plotH=H-padT-padB, n=model.dates.length;
+  // y 範圍：所有 series 值
+  var vals=[]; model.tickers.forEach(function(t){ model.series[t].forEach(function(v){ if(v!=null) vals.push(v); }); });
+  if(STATE.mode==='excess') vals.push(0);            // 確保零基準線入框
+  var yMin=Math.min.apply(null,vals), yMax=Math.max.apply(null,vals);
+  var pad=(yMax-yMin)*0.1||1; yMin-=pad; yMax+=pad;
+  var xAt=function(i){ return padL+(n<=1?0:i/(n-1))*plotW; };
+  var yAt=function(v){ return padT+plotH-((v-yMin)/(yMax-yMin))*plotH; };
+
+  var svg='';
+  // 零基準線（excess 模式 = 大盤本身；growth 模式 = 起跌點）
+  var y0=yAt(0);
+  svg+='<line x1="'+padL+'" y1="'+y0.toFixed(1)+'" x2="'+(padL+plotW)+'" y2="'+y0.toFixed(1)+'" stroke="var(--muted)" stroke-width="'+(STATE.mode==='excess'?1.6:1)+'" stroke-dasharray="'+(STATE.mode==='excess'?'':'4,4')+'" opacity="'+(STATE.mode==='excess'?.85:.5)+'"/>';
+  if(STATE.mode==='excess') svg+='<text x="'+(padL+plotW+4)+'" y="'+(y0+4).toFixed(1)+'" fill="var(--muted)" font-size="10" font-family="'+'var(--mono)">0050</text>';
+  // 月份淡格線
+  var lastMon=''; for(var i=0;i<n;i++){ var mo=model.dates[i].slice(0,7); if(mo!==lastMon){ lastMon=mo; var x=xAt(i); svg+='<line x1="'+x.toFixed(1)+'" y1="'+padT+'" x2="'+x.toFixed(1)+'" y2="'+(padT+plotH)+'" stroke="var(--line)" stroke-width="1" opacity=".5"/>'; svg+='<text x="'+(x+2).toFixed(1)+'" y="'+(padT+plotH-3)+'" fill="var(--muted)" font-size="9" font-family="var(--mono)">'+model.dates[i].slice(5,7)+'月</text>'; } }
+  // 各檔折線（基準最後畫在最上層、其餘照 summary 順序配色）
+  var order=model.summary.map(function(s){return s.ticker;});
+  order.forEach(function(t,idx){
+    var s=model.series[t], col=colorFor(t,idx), d='', started=false, lx=0,ly=0;
+    for(var i=0;i<n;i++){ if(s[i]==null) continue; var x=xAt(i),y=yAt(s[i]); d+=(started?'L':'M')+x.toFixed(1)+','+y.toFixed(1)+' '; started=true; lx=x; ly=y; }
+    if(!started) return;
+    var isB=t===BASE, w=isB?2:1.8;
+    svg+='<path d="'+d+'" fill="none" stroke="'+col+'" stroke-width="'+w+'" stroke-linejoin="round" stroke-linecap="round" opacity="'+(isB?.9:.95)+'"'+(isB&&STATE.mode==='growth'?' stroke-dasharray="5,3"':'')+'/>';
+    // 末端點 + 標籤
+    var sm=model.summary.filter(function(z){return z.ticker===t;})[0];
+    var endv=STATE.mode==='excess'?sm.excess:sm.growth;
+    svg+='<circle cx="'+lx.toFixed(1)+'" cy="'+ly.toFixed(1)+'" r="3.2" fill="'+col+'"/>';
+    svg+='<text x="'+(lx+5).toFixed(1)+'" y="'+(ly+3.5).toFixed(1)+'" fill="'+col+'" font-size="10" font-weight="700" font-family="var(--mono)">'+(endv>=0?'+':'')+endv.toFixed(1)+'</text>';
+  });
+  chart.innerHTML='<svg class="chart" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="xMidYMid meet">'+svg+'</svg>';
+
+  // 來源徽章
+  var badge=document.getElementById('srcbadge');
+  badge.className='srcbadge '+(model.source==='live'?'live':'demo');
+  badge.textContent=model.source==='live'?'LIVE':'DEMO';
+
+  // expose 給 preview_eval 斷言湧現
+  window.__model={ mode:STATE.mode, range:STATE.range, source:model.source, n:n,
+    tickers:model.tickers, baseFlat:STATE.mode==='excess'?(model.series[BASE]||[]).filter(function(v){return v!=null;}).every(function(v){return Math.abs(v)<1e-9;}):null,
+    summary:model.summary.map(function(s){return {ticker:s.ticker,name:s.name,excess:s.excess,growth:s.growth};}) };
+}
+
+/* 排行摘要表 */
+function renderBoard(model){
+  var board=document.getElementById('board');
+  if(model.error){ board.innerHTML=''; return; }
+  var order=model.summary.map(function(s){return s.ticker;});
+  board.innerHTML=model.summary.map(function(s){
+    var idx=order.indexOf(s.ticker), col=colorFor(s.ticker,idx);
+    var val=STATE.mode==='excess'?s.excess:s.growth;
+    var sub=STATE.mode==='excess'?('漲幅 '+(s.growth>=0?'+':'')+s.growth.toFixed(1)+'%'):('vs大盤 '+(s.excess>=0?'+':'')+s.excess.toFixed(1)+'%');
+    var cls=Math.abs(val)<0.05?'':(val>=0?'up':'down');
+    return '<div class="row'+(s.isBase?' base':'')+'" data-t="'+s.ticker+'">'+
+      '<span class="swatch" style="background:'+col+'"></span>'+
+      '<div class="rname"><b>'+s.name+'</b><small>'+s.ticker+(s.isBase?' · 基準':'')+'</small></div>'+
+      '<div class="rval '+cls+'">'+(val>=0?'+':'')+val.toFixed(1)+(STATE.mode==='excess'?' pts':'%')+'<small>'+sub+'</small></div>'+
+      '<button class="rdel" data-del="'+s.ticker+'" title="移除">✕</button>'+
+    '</div>';
+  }).join('');
+}
+
+/* ════════════ 5 流程：抓 → 算 → 畫 ════════════ */
+var _busy=false;
+async function refresh(){
+  if(_busy) return; _busy=true;
+  var stage=document.getElementById('stage');
+  if(!EMBED && STATE.source!=='demo') stage.classList.add('loading');
+  try{
+    var raw=await fetchAll();
+    var model=buildModel(raw);
+    window.__raw=raw; window.__lastModel=model;
+    render(model); renderBoard(model);
+  }catch(e){ render({error:'抓取失敗：'+((e&&e.message)||e)}); }
+  finally{ stage.classList.remove('loading'); _busy=false; }
+}
+
+/* ════════════ 控制 ════════════ */
+function syncSeg(){
+  [].forEach.call(document.querySelectorAll('#modeseg button'),function(b){ b.classList.toggle('on',b.dataset.mode===STATE.mode); });
+  [].forEach.call(document.querySelectorAll('#rangeseg button'),function(b){ b.classList.toggle('on',b.dataset.r===STATE.range); });
+}
+function addSymbol(v){
+  v=String(v).trim().toUpperCase().replace(/[^0-9A-Z^.]/g,'');
+  if(!v){ return toast('請輸入股號'); }
+  if(v===BASE){ return toast('0050 已是固定基準'); }
+  if(STATE.symbols.indexOf(v)>=0){ return toast(v+' 已在清單'); }
+  if(STATE.symbols.length>=7){ return toast('最多比 7 檔（含基準 8 條）'); }
+  STATE.symbols.push(v); saveState(); refresh();
+}
+function bind(){
+  document.getElementById('themebtn').onclick=toggleDark;
+  document.getElementById('modeseg').onclick=function(e){ var b=e.target.closest('button'); if(!b)return; STATE.mode=b.dataset.mode; syncSeg(); saveState(); if(window.__lastModel){ render(buildModel(window.__raw)); renderBoard(buildModel(window.__raw)); } };
+  document.getElementById('rangeseg').onclick=function(e){ var b=e.target.closest('button'); if(!b)return; STATE.range=b.dataset.r; syncSeg(); saveState(); refresh(); };
+  document.getElementById('addbtn').onclick=function(){ var inp=document.getElementById('addinput'); addSymbol(inp.value); inp.value=''; };
+  document.getElementById('addinput').addEventListener('keydown',function(e){ if(e.key==='Enter'){ addSymbol(e.target.value); e.target.value=''; } });
+  document.getElementById('board').addEventListener('click',function(e){ var d=e.target.closest('[data-del]'); if(d){ var t=d.dataset.del; STATE.symbols=STATE.symbols.filter(function(x){return x!==t;}); saveState(); refresh(); } });
+  document.getElementById('refresh').onclick=function(){ STATE.source='live'; refresh(); };
+  document.getElementById('reset').onclick=function(){ STATE.symbols=DEFAULTS.slice(); saveState(); refresh(); toast('已回預設清單'); };
+  document.getElementById('copy').onclick=copyNumbers;
+  if(EMBED){ document.body.classList.add('embed'); }
+}
+function copyNumbers(){
+  var m=window.__lastModel; if(!m||m.error) return;
+  var lines=m.summary.map(function(s){ return s.ticker+'\t'+s.name+'\t漲幅 '+(s.growth>=0?'+':'')+s.growth.toFixed(2)+'%\tvs大盤 '+(s.excess>=0?'+':'')+s.excess.toFixed(2)+'%'; });
+  var txt='標的\t名稱\t期間漲幅\t累積超越大盤\n'+lines.join('\n');
+  try{ navigator.clipboard.writeText(txt).then(function(){toast('已複製 '+m.summary.length+' 檔數字');},function(){prompt('複製：',txt);}); }catch(e){ prompt('複製：',txt); }
+}
+function toast(msg){ var t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toast._t); toast._t=setTimeout(function(){t.classList.remove('show');},1600); }
+
+/* ════════════ 測試鉤子（headless 斷言） ════════════ */
+window.__app={
+  state:function(){return JSON.parse(JSON.stringify(STATE));},
+  setMode:function(m){STATE.mode=m;syncSeg();render(buildModel(window.__raw));renderBoard(buildModel(window.__raw));return window.__model;},
+  model:function(){return window.__model;},
+  forceDemo:function(){STATE.source='demo';return refresh();}
+};
+
+/* ════════════ 啟動 ════════════ */
+loadState(); if(EMBED){ STATE.symbols=DEFAULTS.slice(); STATE.mode='excess'; STATE.range='6mo'; }
+document.getElementById('baseLabel').textContent=BASE+'　'+(TW_NAMES[BASE]||'');
+syncSeg(); bind();
+if(EMBED){ refresh(); } else { STATE.source='live'; refresh(); }
+if(!EMBED && 'serviceWorker' in navigator && location.protocol.startsWith('http'))
+  window.addEventListener('load',function(){ navigator.serviceWorker.register('../sw.js').catch(function(){}); });
+</script>
+</body>
+</html>

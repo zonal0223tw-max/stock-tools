@@ -1,0 +1,15 @@
+{
+  "name": "看股工具",
+  "short_name": "看股",
+  "description": "股號就是一切 · 相對大盤比較 · 手機看盤離線可用",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f3ede1",
+  "theme_color": "#bf5a2f",
+  "lang": "zh-Hant",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

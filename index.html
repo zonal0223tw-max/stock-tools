@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
+<title>看股工具</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="看股工具">
+<meta name="theme-color" content="#bf5a2f" id="themeColorMeta">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon.svg">
+<!--
+═══════════════════════════════════════════════════════════════════════════
+  看股工具站 · 首頁 launchpad
+  ─────────────────────────────────────────────────────────────────────────
+  · 工具列 data-driven（TOOLS 陣列，加工具 = 加一筆）
+  · 主題控制台：外觀(亮/暗) · 漲跌配色(台股紅漲綠跌 ⇄ 國際綠漲紅跌) · 主題色板
+    → 寫 localStorage 'stk_theme'，每個工具頁讀同一把鑰匙，全站同步
+  · PWA：加到主畫面離線可用（borrow receipt-log 的 manifest/sw/icon 範式）
+═══════════════════════════════════════════════════════════════════════════
+-->
+<style>
+  :root{
+    --bg:#f3ede1; --panel:#fbf8f1; --ink:#2c2620; --muted:#9a8f7d;
+    --line:#e4dac7; --accent:#bf5a2f; --accent2:#a64824;
+    --up:#d92e2e; --down:#1f9d55;
+    --sans:"PingFang TC","Microsoft JhengHei","微軟正黑體","Noto Sans TC",-apple-system,system-ui,"Helvetica Neue",Arial,sans-serif;
+    --serif:"PingFang TC","Microsoft JhengHei","微軟正黑體","Noto Sans TC",-apple-system,system-ui,sans-serif;
+    --mono:ui-monospace,Menlo,Consolas,monospace;
+  }
+  html[data-palette="intl"]{ --up:#1f9d55; --down:#d92e2e; }
+  html[data-dark="1"]{ --bg:#15130f; --panel:#211d17; --ink:#f0e9dc; --muted:#998f7d; --line:#3a332a; }
+  html[data-dark="1"][data-palette="tw"]{ --up:#ff5a5a; --down:#37c977; }
+  html[data-dark="1"][data-palette="intl"]{ --up:#37c977; --down:#ff5a5a; }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{color:var(--ink);font-family:var(--sans);background:var(--bg);
+    background-image:radial-gradient(color-mix(in srgb,var(--accent) 8%,transparent) 1px,transparent 1px);background-size:22px 22px;
+    -webkit-font-smoothing:antialiased;transition:background .2s,color .2s;
+    padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+  .wrap{max-width:760px;margin:0 auto;padding:26px 16px 48px}
+
+  header{margin-bottom:18px}
+  .brand{font:700 11px/1 var(--sans);letter-spacing:.2em;color:var(--accent);text-transform:uppercase}
+  h1{font:800 30px/1.1 var(--serif);margin:9px 0 6px}
+  .sub{font:400 13px/1.6 var(--sans);color:var(--muted);margin:0;max-width:460px}
+
+  /* ── 主題控制台 ── */
+  .console{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:15px 16px;margin-bottom:22px;box-shadow:0 10px 26px rgba(80,60,30,.05)}
+  .ctitle{font:700 11px var(--sans);letter-spacing:.05em;color:var(--muted);text-transform:uppercase;margin-bottom:13px;display:flex;align-items:center;gap:7px}
+  .crow{display:flex;align-items:center;gap:12px;margin-bottom:13px;flex-wrap:wrap}
+  .crow:last-child{margin-bottom:0}
+  .ckey{font:600 12px var(--sans);color:var(--ink);width:60px;flex:none}
+  .seg{display:flex;gap:5px;flex:1;min-width:180px}
+  .seg button{flex:1;font:600 12px var(--sans);padding:9px 4px;border:1px solid var(--line);background:var(--bg);border-radius:9px;cursor:pointer;color:var(--ink);transition:.14s;line-height:1.25}
+  .seg button small{display:block;font:500 10px var(--sans);color:var(--muted);margin-top:1px}
+  .seg button.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent)}
+  .seg button.on small{color:var(--accent)}
+  .updemo{display:flex;gap:6px;margin-left:auto;flex:none}
+  .updemo span{font:700 12px var(--mono);padding:3px 9px;border-radius:7px}
+  .updemo .u{color:var(--up);background:color-mix(in srgb,var(--up) 14%,transparent)}
+  .updemo .d{color:var(--down);background:color-mix(in srgb,var(--down) 14%,transparent)}
+  .swatches{display:flex;gap:9px;flex:1}
+  .swatches button{width:30px;height:30px;border-radius:50%;border:2px solid transparent;cursor:pointer;padding:0;transition:.14s}
+  .swatches button.on{border-color:var(--ink);transform:scale(1.12)}
+
+  /* ── 工具網格 ── */
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr));gap:16px}
+  .card{display:block;text-decoration:none;color:inherit;background:var(--panel);border:1px solid var(--line);border-radius:16px;overflow:hidden;box-shadow:0 10px 26px rgba(80,60,30,.06);transition:.18s}
+  .card:active{transform:scale(.985)}
+  .card:hover{border-color:var(--accent);box-shadow:0 16px 34px rgba(80,60,30,.13)}
+  .thumb{position:relative;aspect-ratio:16/12;background:var(--bg);overflow:hidden;border-bottom:1px solid var(--line)}
+  .thumb iframe{position:absolute;inset:0;width:100%;height:100%;border:0;pointer-events:none;transform:scale(1.01)}
+  .thumb .ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font:500 12px var(--sans);color:var(--muted)}
+  .cbody{padding:14px 15px 16px}
+  .ctop{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .ctop h3{font:700 17px var(--serif);margin:0}
+  .live{font:700 9px var(--mono);letter-spacing:.06em;padding:3px 7px;border-radius:12px;color:var(--down);background:color-mix(in srgb,var(--down) 14%,transparent)}
+  .cen{font:italic 500 12px var(--serif);color:var(--accent);margin:3px 0 8px}
+  .cdesc{font:400 12px/1.6 var(--sans);color:var(--muted);margin:0}
+
+  .soon{border:1px dashed var(--line);border-radius:16px;background:transparent;padding:22px 18px;display:flex;flex-direction:column;justify-content:center;gap:8px}
+  .soon .si{font:200 30px var(--sans);color:var(--accent);line-height:1}
+  .soon h3{font:700 14px var(--serif);margin:0}
+  .soon p{font:400 11px/1.6 var(--sans);color:var(--muted);margin:0}
+
+  .foot{margin-top:26px;font:400 11px/1.7 var(--sans);color:var(--muted);text-align:center}
+  .foot b{color:var(--accent2)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">STOCK TOOLS · 看股工具</div>
+    <h1>看股工具</h1>
+    <p class="sub">股號就是一切——不選券商、不背中文全名。手機開、加到主畫面離線可用。</p>
+  </header>
+
+  <!-- ════ 主題控制台 ════ -->
+  <section class="console">
+    <div class="ctitle">⚙︎ 外觀設定 · 全站同步</div>
+    <div class="crow">
+      <span class="ckey">外觀</span>
+      <div class="seg" id="segDark">
+        <button data-v="0">☀︎ 淺色</button>
+        <button data-v="1">☾ 深色</button>
+      </div>
+    </div>
+    <div class="crow">
+      <span class="ckey">漲跌色</span>
+      <div class="seg" id="segPalette">
+        <button data-v="tw">台股<small>紅漲 綠跌</small></button>
+        <button data-v="intl">國際<small>綠漲 紅跌</small></button>
+      </div>
+      <div class="updemo"><span class="u" id="demoUp">▲ 漲</span><span class="d" id="demoDown">▼ 跌</span></div>
+    </div>
+    <div class="crow">
+      <span class="ckey">主題色</span>
+      <div class="swatches" id="swatches"></div>
+    </div>
+  </section>
+
+  <!-- ════ 工具列 ════ -->
+  <div class="grid" id="grid"></div>
+
+  <p class="foot">資料走公開報價 proxy（只送股號出門）· 設定與清單存在你手機本機 · <b>加到主畫面</b>離線可用</p>
+</div>
+
+<script>
+"use strict";
+/* ════ 主題：localStorage 'stk_theme'，全站共用 ════ */
+var THEME_KEY='stk_theme';
+var ACCENTS=[
+  {k:'terra', a:'#bf5a2f', a2:'#a64824'},
+  {k:'blue',  a:'#3a6ea5', a2:'#2d5683'},
+  {k:'green', a:'#2e7d52', a2:'#246340'},
+  {k:'gold',  a:'#c2922f', a2:'#a37a26'},
+  {k:'purple',a:'#8e5bbf', a2:'#74489c'},
+  {k:'teal',  a:'#1a9b8e', a2:'#147a70'}
+];
+function loadTheme(){ try{return JSON.parse(localStorage.getItem(THEME_KEY))||{}}catch(e){return{}} }
+function saveTheme(t){ try{localStorage.setItem(THEME_KEY,JSON.stringify(t))}catch(e){} }
+function applyTheme(){
+  var t=loadTheme(), r=document.documentElement;
+  r.setAttribute('data-dark', t.dark?'1':'0');
+  r.setAttribute('data-palette', t.palette==='intl'?'intl':'tw');
+  var ac=ACCENTS.filter(function(x){return x.k===t.accentKey;})[0]||ACCENTS[0];
+  r.style.setProperty('--accent',ac.a); r.style.setProperty('--accent2',ac.a2);
+  // 把選定色值寫回 theme，讓工具頁（讀 t.accent 色值）也能同步主題色
+  if(t.accentKey!==ac.k||t.accent!==ac.a||t.accent2!==ac.a2){ t.accentKey=ac.k; t.accent=ac.a; t.accent2=ac.a2; saveTheme(t); }
+  var meta=document.getElementById('themeColorMeta'); if(meta) meta.setAttribute('content', t.dark?'#15130f':ac.a);
+  syncConsole(t,ac);
+}
+function syncConsole(t,ac){
+  [].forEach.call(document.querySelectorAll('#segDark button'),function(b){ b.classList.toggle('on', b.dataset.v===(t.dark?'1':'0')); });
+  var pal=t.palette==='intl'?'intl':'tw';
+  [].forEach.call(document.querySelectorAll('#segPalette button'),function(b){ b.classList.toggle('on', b.dataset.v===pal); });
+  [].forEach.call(document.querySelectorAll('#swatches button'),function(b){ b.classList.toggle('on', b.dataset.k===(ac.k)); });
+}
+function buildSwatches(){
+  var box=document.getElementById('swatches');
+  box.innerHTML=ACCENTS.map(function(x){ return '<button data-k="'+x.k+'" title="'+x.k+'" style="background:'+x.a+'"></button>'; }).join('');
+  box.addEventListener('click',function(e){ var b=e.target.closest('button'); if(!b)return; var t=loadTheme(); t.accentKey=b.dataset.k; saveTheme(t); applyTheme(); });
+}
+function bindConsole(){
+  document.getElementById('segDark').addEventListener('click',function(e){ var b=e.target.closest('button'); if(!b)return; var t=loadTheme(); t.dark=b.dataset.v==='1'; saveTheme(t); applyTheme(); });
+  document.getElementById('segPalette').addEventListener('click',function(e){ var b=e.target.closest('button'); if(!b)return; var t=loadTheme(); t.palette=b.dataset.v; saveTheme(t); applyTheme(); });
+}
+window.addEventListener('storage',function(e){ if(e.key===THEME_KEY) applyTheme(); });
+
+/* ════ 工具列（data-driven：加工具 = 加一筆） ════ */
+var TOOLS=[
+  { title:'相對大盤比較', en:'Relative to Market', folder:'compare', live:true,
+    desc:'輸入股號就好，全部 rebase 跟 0050 大盤比——誰跑贏、誰累積落後大盤，一張疊圖看穿。' }
+];
+function buildGrid(){
+  var grid=document.getElementById('grid');
+  TOOLS.forEach(function(t){
+    var a=document.createElement('a'); a.className='card'; a.href=t.folder+'/index.html';
+    a.innerHTML=
+      '<div class="thumb"><div class="ph">載入預覽…</div>'+
+        '<iframe loading="lazy" src="'+t.folder+'/index.html?embed=1" title="'+t.title+' 預覽" tabindex="-1" scrolling="no"></iframe>'+
+      '</div>'+
+      '<div class="cbody"><div class="ctop"><h3>'+t.title+'</h3>'+(t.live?'<span class="live">LIVE 報價</span>':'')+'</div>'+
+        '<div class="cen">'+t.en+'</div><p class="cdesc">'+t.desc+'</p></div>';
+    grid.appendChild(a);
+  });
+  // 籌備磚
+  var soon=document.createElement('div'); soon.className='soon';
+  soon.innerHTML='<div class="si">＋</div><h3>更多工具籌備中</h3><p>同一個站、同一套外觀設定。下一支工具會直接出現在這列。</p>';
+  grid.appendChild(soon);
+}
+
+/* ════ 啟動 ════ */
+buildSwatches(); bindConsole(); buildGrid(); applyTheme();
+if('serviceWorker' in navigator && location.protocol.startsWith('http'))
+  window.addEventListener('load',function(){ navigator.serviceWorker.register('sw.js').catch(function(){}); });
+
+/* 測試鉤子 */
+window.__home={ theme:function(){return loadTheme();}, tools:function(){return TOOLS.map(function(t){return t.folder;});} };
+</script>
+</body>
+</html>

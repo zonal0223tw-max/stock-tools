@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
+<title>ETF 折溢價 · 看股工具</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="看股工具">
+<meta name="theme-color" content="#bf5a2f">
+<link rel="manifest" href="../manifest.json">
+<link rel="apple-touch-icon" href="../icon.svg">
+<!--
+═══════════════════════════════════════════════════════════════════════════
+  ETF 折溢價監控 · Premium/Discount  (看股工具站 · 工具 2)
+  ─────────────────────────────────────────────────────────────────────────
+  靈魂(A)：把「市價偏離淨值多少」這個散落難算的數字，變成打開就看到的溫度。
+           折溢價 = (市價 − 預估淨值) / 預估淨值 × 100%；溢價=偏貴(紅)、折價=偏便宜(綠)。
+  揭穿(borrow twetf 拆解)：個股一眼看燈號，全市場用「成交量加權溫度計」收斂成冷熱。
+  資料(D 湧現·真假不混)：
+    · DEMO  = 2026-06-04 收盤快照(snapshot.js 311 支真實 ETF)，?embed 封面也走它
+    · LIVE  = 每日抓一次 mis.twse 收盤市價 + 每日淨值源(接口留位，盤後管線)
+  recombine：compare(主題控制台全站同步/PWA shell/LIVE-DEMO 抽象) + twetf 拆出的
+             折溢價/燈號/加權溫度計/雷達公式(前端自算，不靠 server) + 新溫度計/雷達 widget
+  engine/domain 分離：引擎吃 {p,nav,vol} 認 type 不認名稱；資料源可換。
+  零相依單檔 · 主題讀 localStorage 'stk_theme' 全站同步 · ?embed=1 縮圖。
+═══════════════════════════════════════════════════════════════════════════
+-->
+<style>
+  :root{
+    --bg:#f3ede1; --panel:#fbf8f1; --ink:#2c2620; --muted:#9a8f7d;
+    --line:#e4dac7; --accent:#bf5a2f; --accent2:#a64824;
+    --up:#d92e2e; --down:#1f9d55;        /* 溢價=紅(偏貴) / 折價=綠(偏便宜)；台股紅綠慣例 */
+    --sans:"PingFang TC","Microsoft JhengHei","微軟正黑體","Noto Sans TC",-apple-system,system-ui,"Helvetica Neue",Arial,sans-serif;
+    --mono:ui-monospace,Menlo,Consolas,"Roboto Mono",monospace;
+  }
+  html[data-palette="intl"]{ --up:#1f9d55; --down:#d92e2e; }
+  html[data-dark="1"]{
+    --bg:#15130f; --panel:#211d17; --ink:#f0e9dc; --muted:#998f7d;
+    --line:#3a332a; --accent:#e0813f; --accent2:#cf6f30;
+  }
+  html[data-dark="1"][data-palette="tw"]{ --up:#ff5a5a; --down:#37c977; }
+  html[data-dark="1"][data-palette="intl"]{ --up:#37c977; --down:#ff5a5a; }
+
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{color:var(--ink);font-family:var(--sans);background:var(--bg);
+    -webkit-font-smoothing:antialiased;
+    padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    transition:background .2s,color .2s}
+  .wrap{max-width:820px;margin:0 auto;padding:16px 14px 40px}
+
+  .top{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+  .back{font:600 13px var(--sans);color:var(--muted);text-decoration:none;flex:none}
+  .back:hover{color:var(--accent)}
+  h1{font:700 21px/1.15 var(--sans);margin:0;flex:1}
+  .themebtn{flex:none;width:38px;height:38px;border:1px solid var(--line);background:var(--panel);
+    border-radius:11px;cursor:pointer;font-size:17px;line-height:1;color:var(--ink)}
+  .themebtn:active{transform:scale(.94)}
+  .sub{font:500 12px var(--sans);color:var(--muted);margin:0 0 14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .srcbadge{font:600 10px var(--mono);letter-spacing:.04em;padding:3px 8px;border-radius:20px}
+  .srcbadge.live{background:color-mix(in srgb,var(--down) 18%,transparent);color:var(--down)}
+  .srcbadge.demo{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent)}
+
+  /* ── 總覽卡 ── */
+  .summary{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:12px}
+  @media(max-width:680px){.summary{grid-template-columns:repeat(3,1fr)}}
+  .mc{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 11px}
+  .mc-l{font:600 10px var(--sans);color:var(--muted);letter-spacing:.02em;margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mc-v{font:800 18px/1.1 var(--mono);font-variant-numeric:tabular-nums}
+  .mc-v.up{color:var(--up)} .mc-v.down{color:var(--down)}
+  .mc.clk{cursor:pointer} .mc.clk:active{transform:scale(.97)}
+
+  /* ── 溫度計 + 雷達 ── */
+  .dash{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:10px;margin-bottom:14px}
+  @media(max-width:680px){.dash{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:13px}
+  .card-h{font:700 13px var(--sans);color:var(--ink);margin-bottom:12px;display:flex;align-items:center;gap:6px}
+  .card-h small{font:500 11px var(--sans);color:var(--muted);margin-left:auto}
+
+  .thermo{display:flex;gap:14px;align-items:stretch}
+  .tube-wrap{display:flex;flex-direction:column;align-items:center;gap:4px;flex:none}
+  .tube-scale{display:flex;flex-direction:column;justify-content:space-between;font:600 9px var(--sans);color:var(--muted);height:120px;position:absolute;left:-18px}
+  .tube{position:relative;width:26px;height:120px;border:2px solid var(--line);border-radius:14px;overflow:hidden;background:color-mix(in srgb,var(--ink) 6%,transparent)}
+  .tube-fill{position:absolute;left:0;right:0;bottom:0;border-radius:0 0 11px 11px;transition:height .5s,background .3s}
+  .bulb{width:30px;height:30px;border-radius:50%;border:2px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:15px;margin-top:-4px}
+  .thermo-info{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center}
+  .thermo-val{font:800 30px/1 var(--mono);font-variant-numeric:tabular-nums}
+  .thermo-state{font:700 13px var(--sans);margin-top:4px}
+  .thermo-sub{font:500 11px var(--sans);color:var(--muted);margin-top:3px}
+  .thermo-stats{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px}
+  .ts-i{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:5px 8px}
+  .ts-l{font:600 9px var(--sans);color:var(--muted)}
+  .ts-v{font:700 13px var(--mono)} .ts-v.up{color:var(--up)} .ts-v.down{color:var(--down)}
+
+  .radar-bar{display:flex;height:34px;border-radius:9px;overflow:hidden;border:1px solid var(--line);margin-bottom:10px}
+  .rb{display:flex;align-items:center;justify-content:center;font:700 11px var(--mono);color:#fff;min-width:30px;transition:flex .4s}
+  .radar-detail{font:600 12px/1.9 var(--sans)}
+  .radar-mood{font:700 13px var(--sans);margin-left:auto}
+
+  /* ── 控制 ── */
+  .ctrl{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+  .fb{font:600 12px var(--sans);padding:7px 12px;border:1px solid var(--line);background:var(--panel);border-radius:9px;cursor:pointer;color:var(--ink)}
+  .fb.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  .si{flex:1;min-width:120px;font:600 13px var(--mono);padding:8px 11px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:9px}
+  .si:focus{outline:0;border-color:var(--accent)}
+  .sel{font:600 12px var(--sans);padding:8px 9px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:9px;cursor:pointer}
+
+  /* ── 表格(桌) / 卡片(手機) ── */
+  table.main{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:13px;overflow:hidden}
+  table.main th{font:600 11px var(--sans);color:var(--muted);text-align:right;padding:9px 8px;border-bottom:1px solid var(--line);white-space:nowrap;cursor:pointer;user-select:none}
+  table.main th.l{text-align:left} table.main th.c{text-align:center}
+  table.main td{font:600 13px var(--mono);text-align:right;padding:9px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+  table.main tr:last-child td{border-bottom:0}
+  table.main td.l{text-align:left} table.main td.c{text-align:center}
+  table.main tr:hover td{background:color-mix(in srgb,var(--accent) 5%,transparent)}
+  .nm{font:600 13px var(--sans);color:var(--ink)} .cd{font:600 11px var(--mono);color:var(--muted)}
+  .up{color:var(--up)} .down{color:var(--down)}
+  .fav{cursor:pointer;color:var(--muted);font-size:14px} .fav.on{color:var(--accent)}
+  .pill{font:600 10px var(--sans);padding:2px 7px;border-radius:20px;background:color-mix(in srgb,var(--ink) 8%,transparent);color:var(--muted)}
+  @media(max-width:680px){ table.main{display:none} }
+  .mob{display:none}
+  @media(max-width:680px){ .mob{display:block} }
+  .mrow{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:11px 13px;margin-bottom:8px;display:flex;align-items:center;gap:10px}
+  .mrow .nm{flex:1;min-width:0;overflow:hidden}
+  .mrow .nm b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mbig{font:800 17px var(--mono);text-align:right}
+  .msub{font:500 10px var(--sans);color:var(--muted);text-align:right;margin-top:1px}
+  .spark{vertical-align:middle}
+
+  .foot{font:400 11px/1.7 var(--sans);color:var(--muted);margin-top:16px}
+  .foot b{color:var(--accent2)}
+  .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);background:var(--ink);color:var(--bg);font:600 12px var(--sans);padding:10px 18px;border-radius:22px;opacity:0;pointer-events:none;transition:.22s;z-index:20}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  body.embed .wrap{padding:6px 10px}
+  body.embed .top,body.embed .sub,body.embed .ctrl,body.embed #list-area,body.embed .mob,body.embed .foot{display:none}
+  body.embed .summary{grid-template-columns:repeat(3,1fr)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <a class="back" href="../index.html">‹ 工具</a>
+    <h1>ETF 折溢價</h1>
+    <button class="themebtn" id="themebtn" title="日夜切換">◐</button>
+  </div>
+  <p class="sub">市價 vs 預估淨值偏離多少 · <span class="srcbadge demo" id="srcbadge">DEMO</span> <span id="datetxt"></span></p>
+
+  <div class="summary" id="summary"></div>
+
+  <div class="dash">
+    <div class="card">
+      <div class="card-h">🌡️ 市場溫度計 <small>成交量加權</small></div>
+      <div class="thermo">
+        <div class="tube-wrap">
+          <div class="tube"><div class="tube-fill" id="tubeFill"></div></div>
+          <div class="bulb" id="bulb">·</div>
+        </div>
+        <div class="thermo-info">
+          <div class="thermo-val" id="thVal">—</div>
+          <div class="thermo-state" id="thState">載入中</div>
+          <div class="thermo-sub">全市場平均折溢價</div>
+          <div class="thermo-stats">
+            <div class="ts-i"><div class="ts-l">最大溢價</div><div class="ts-v up" id="thMaxP">—</div></div>
+            <div class="ts-i"><div class="ts-l">最深折價</div><div class="ts-v down" id="thMaxD">—</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-h">📡 情緒雷達 <span class="radar-mood" id="mood"></span></div>
+      <div class="radar-bar" id="radarBar"></div>
+      <div class="radar-detail" id="radarDetail"></div>
+    </div>
+  </div>
+
+  <div class="ctrl" id="ctrl">
+    <button class="fb on" data-f="all">全部</button>
+    <button class="fb" data-f="p">溢價</button>
+    <button class="fb" data-f="d">折價</button>
+    <button class="fb" data-f="stock">股票型</button>
+    <button class="fb" data-f="active">主動式</button>
+    <button class="fb" data-f="bond">債券</button>
+    <button class="fb" data-f="lev">槓桿/反向</button>
+    <button class="fb" data-f="fav" id="favBtn">⭐ 自選</button>
+    <input class="si" id="q" placeholder="搜尋代號或名稱…" autocomplete="off">
+    <select class="sel" id="srt">
+      <option value="ab">折溢價絕對值</option>
+      <option value="pd">溢價 高→低</option>
+      <option value="da">折價 深→淺</option>
+      <option value="cd">代號</option>
+      <option value="vd">成交量</option>
+    </select>
+  </div>
+
+  <div id="list-area">
+    <table class="main">
+      <thead><tr>
+        <th></th>
+        <th class="l" data-s="cd">代號</th>
+        <th class="l">名稱</th>
+        <th class="c">類型</th>
+        <th data-s="nav">預估淨值</th>
+        <th data-s="pd">市價</th>
+        <th>漲跌</th>
+        <th data-s="ab">折溢價%</th>
+        <th class="c">燈號</th>
+        <th>近3日</th>
+        <th data-s="vd">量(張)</th>
+      </tr></thead>
+      <tbody id="tb"></tbody>
+    </table>
+  </div>
+  <div class="mob" id="mob"></div>
+
+  <p class="foot">折溢價 ＝ <b>(市價 − 預估淨值) ÷ 預估淨值 × 100%</b>　溢價=市價偏貴、折價=市價偏便宜。<br>資料：2026-06-04 收盤快照（開發種子）· 正式版每日抓一次 TWSE 收盤市價＋淨值 · 僅供參考不構成投資建議。</p>
+</div>
+<div class="toast" id="toast"></div>
+
+<script src="snapshot.js"></script>
+<script>
+"use strict";
+/* ════ 主題：讀 localStorage 'stk_theme' 全站同步（借 compare） ════ */
+var THEME_KEY='stk_theme';
+function loadTheme(){ try{return JSON.parse(localStorage.getItem(THEME_KEY))||{}}catch(e){return{}} }
+function applyTheme(){
+  var t=loadTheme(), r=document.documentElement;
+  r.setAttribute('data-dark', t.dark?'1':'0');
+  r.setAttribute('data-palette', t.palette==='intl'?'intl':'tw');
+  if(t.accent){ r.style.setProperty('--accent',t.accent); r.style.setProperty('--accent2',t.accent2||t.accent); }
+}
+function toggleDark(){ var t=loadTheme(); t.dark=!t.dark; localStorage.setItem(THEME_KEY,JSON.stringify(t)); applyTheme(); }
+window.addEventListener('storage',function(e){ if(e.key===THEME_KEY) applyTheme(); });
+applyTheme();
+
+/* ════ STATE ════ */
+var EMBED=new URLSearchParams(location.search).has('embed');
+var TYPE_LABEL={stock:'股票型',active:'主動式',bond:'債券',lev:'槓桿/反向'};
+var STATE={ source:'demo', filter:'all', sort:'ab', q:'' };
+var FAVS=(function(){ try{return new Set(JSON.parse(localStorage.getItem('etf_premium_favs'))||[])}catch(e){return new Set()} })();
+var DATA=[];      // 引擎算完的列
+var SNAPDATE='';
+
+/* ════ 資料源（DEMO=收盤快照 / LIVE=每日抓一次，可換接口） ════ */
+function loadDemo(){
+  SNAPDATE=(window.__SNAP&&window.__SNAP.date)||'';
+  return ((window.__SNAP&&window.__SNAP.rows)||[]).map(function(r){
+    return { c:r.c, n:r.n, t:r.t, p:r.p, nav:r.nav, chg:r.chg||0, vol:r.vol||0, hist:r.h||null };
+  });
+}
+async function loadLive(){
+  // TODO 盤後資料管線：mis.twse getStockInfo 收盤市價(z) + 每日淨值源(發行商/集保收盤淨值)
+  //   每日抓一次即可（折溢價是每日量級，不需 tick）。合併成同形狀 records 後回傳。
+  throw new Error('LIVE 每日資料源尚未接，先用收盤快照');
+}
+
+/* ════ 引擎（零領域，認 type 不認名稱；前端自算 diff，已驗證對） ════ */
+function sig(diff){
+  if(diff==null) return {l:'—',i:'⚪'};
+  if(diff>1)   return {l:'溢價過熱',i:'🔴'};
+  if(diff>0)   return {l:'溢價',i:'🟠'};
+  if(diff<-1)  return {l:'深折',i:'🟣'};
+  if(diff<0)   return {l:'折價',i:'🔵'};
+  return {l:'平價',i:'⚪'};
+}
+function computeAll(records){
+  records.forEach(function(r){
+    r.diff = (r.nav>0) ? (r.p-r.nav)/r.nav*100 : null;
+    r.pct  = (r.p-r.chg)!==0 ? r.chg/(r.p-r.chg)*100 : 0;  // 漲跌幅(由 chg 反推昨收)
+    r.sg   = sig(r.diff);
+  });
+  // 溫度計：成交量加權，濾槓反/債券/低量/極端（借 twetf）
+  var v=records.filter(function(r){ return r.diff!=null && r.t!=='lev' && r.t!=='bond' && r.vol>=100 && Math.abs(r.diff)<=5; });
+  var tv=v.reduce(function(s,r){return s+r.vol;},0);
+  var avg= tv>0 ? v.reduce(function(s,r){return s+r.diff*r.vol;},0)/tv
+               : (v.length? v.reduce(function(s,r){return s+r.diff;},0)/v.length : 0);
+  // 雷達 4 分檔
+  var h2=v.filter(function(r){return r.diff>1;}).length,
+      h1=v.filter(function(r){return r.diff>0.1&&r.diff<=1;}).length,
+      c1=v.filter(function(r){return r.diff<-0.1&&r.diff>=-1;}).length,
+      c2=v.filter(function(r){return r.diff<-1;}).length;
+  var stats={ count:records.length,
+    pcount:records.filter(function(r){return r.diff>0.1;}).length,
+    dcount:records.filter(function(r){return r.diff<-0.1;}).length,
+    maxP:records.reduce(function(m,r){return r.diff>m?r.diff:m;},-99),
+    maxD:records.reduce(function(m,r){return r.diff<m?r.diff:m;}, 99) };
+  return { rows:records, thermo:{avg:avg,n:v.length}, radar:{h2:h2,h1:h1,c1:c1,c2:c2,total:v.length}, stats:stats };
+}
+var MODEL=null;
+
+/* ════ RENDER ════ */
+function fmt(n,d){ return (n>=0?'+':'')+n.toFixed(d==null?2:d); }
+function drawSummary(m){
+  var s=m.stats;
+  var cells=[
+    {l:'監控 ETF', v:s.count, cls:''},
+    {l:'溢價 >+0.1%', v:s.pcount, cls:'up', f:function(){setF('p');}},
+    {l:'折價 <-0.1%', v:s.dcount, cls:'down', f:function(){setF('d');}},
+    {l:'最大溢價', v:fmt(s.maxP)+'%', cls:'up'},
+    {l:'最深折價', v:fmt(s.maxD)+'%', cls:'down'},
+    {l:'市場溫度', v:fmt(m.thermo.avg)+'%', cls:m.thermo.avg>=0?'up':'down'}
+  ];
+  document.getElementById('summary').innerHTML=cells.map(function(c,i){
+    return '<div class="mc'+(c.f?' clk':'')+'"'+(c.f?' data-sum="'+i+'"':'')+'><div class="mc-l">'+c.l+'</div><div class="mc-v '+c.cls+'">'+c.v+'</div></div>';
+  }).join('');
+}
+function drawThermo(m){
+  var avg=m.thermo.avg;
+  var pct=Math.min(Math.max((avg+2)/4*100,5),95);
+  var col, st, em;
+  if(avg>1)        { col='var(--up)';   st='🔴 溢價過熱'; em='🔥'; }
+  else if(avg>0.1) { col='var(--up)';   st='🟠 溢價';     em='☀️'; }
+  else if(avg<-1)  { col='var(--down)'; st='🟣 深度折價'; em='🥶'; }
+  else if(avg<-0.1){ col='var(--down)'; st='🔵 折價';     em='❄️'; }
+  else             { col='var(--accent)';st='⚪ 接近平價'; em='😊'; }
+  var f=document.getElementById('tubeFill');
+  f.style.height=pct+'%'; f.style.background=col;
+  var b=document.getElementById('bulb'); b.textContent=em; b.style.borderColor=col;
+  var vEl=document.getElementById('thVal'); vEl.textContent=fmt(avg)+'%'; vEl.style.color=col;
+  var sEl=document.getElementById('thState'); sEl.textContent=st; sEl.style.color=col;
+  document.getElementById('thMaxP').textContent=fmt(m.stats.maxP)+'%';
+  document.getElementById('thMaxD').textContent=fmt(m.stats.maxD)+'%';
+}
+function drawRadar(m){
+  var r=m.radar, T=r.total||1;
+  var segs=[{n:r.h2,c:'#c0392b',l:'過熱'},{n:r.h1,c:'#e67e22',l:'溢價'},{n:r.c1,c:'#2980b9',l:'折價'},{n:r.c2,c:'#8e44ad',l:'深折'}];
+  document.getElementById('radarBar').innerHTML=segs.map(function(s){
+    if(!s.n) return '';
+    return '<div class="rb" style="flex:'+s.n+';background:'+s.c+'" title="'+s.l+' '+s.n+'支">'+s.n+'</div>';
+  }).join('');
+  var up=r.h2+r.h1, dn=r.c1+r.c2, mood, mc;
+  if(r.h2>T*0.1)       { mood='🔴 溢價過熱'; mc='#c0392b'; }
+  else if(r.c2>T*0.1)  { mood='🟣 深度折價'; mc='#8e44ad'; }
+  else if(up>dn*2)     { mood='🟠 溢價偏多'; mc='#e67e22'; }
+  else if(dn>up*2)     { mood='🔵 折價偏多'; mc='#2980b9'; }
+  else if(up>dn)       { mood='🟠 微幅溢價'; mc='#e67e22'; }
+  else if(dn>up)       { mood='🔵 微幅折價'; mc='#2980b9'; }
+  else                 { mood='⚪ 接近平價'; mc='var(--muted)'; }
+  var mEl=document.getElementById('mood'); mEl.textContent=mood; mEl.style.color=mc;
+  function span(n,c,l){ return '<span style="color:'+c+'">'+l+' '+n+'('+Math.round(n/T*100)+'%)</span>'; }
+  document.getElementById('radarDetail').innerHTML=
+    span(r.h2,'#c0392b','過熱')+' · '+span(r.h1,'#e67e22','溢價')+' · '+
+    span(r.c1,'#2980b9','折價')+' · '+span(r.c2,'#8e44ad','深折')+
+    ' <span style="color:var(--muted)">共'+T+'支</span>';
+}
+function sparkline(hist){
+  if(!hist||hist.length<2) return '';
+  var w=44,h=16,mn=Math.min.apply(null,hist),mx=Math.max.apply(null,hist),rng=(mx-mn)||1;
+  // hist[0]=今, 反轉成左舊右新
+  var pts=hist.slice().reverse().map(function(v,i){
+    var x=i/(hist.length-1)*w, y=h-(v-mn)/rng*h; return x.toFixed(1)+','+y.toFixed(1);
+  }).join(' ');
+  var rising=hist[0]>=hist[hist.length-1];
+  var col=rising?'var(--up)':'var(--down)';
+  return '<svg class="spark" width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'"><polyline points="'+pts+'" fill="none" stroke="'+col+'" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+}
+function filtered(){
+  var q=STATE.q.trim().toUpperCase();
+  return MODEL.rows.filter(function(r){
+    if(STATE.filter==='p' && !(r.diff>0.1)) return false;
+    if(STATE.filter==='d' && !(r.diff<-0.1)) return false;
+    if(['stock','active','bond','lev'].indexOf(STATE.filter)>=0 && r.t!==STATE.filter) return false;
+    if(STATE.filter==='fav' && !FAVS.has(r.c)) return false;
+    if(q && r.c.toUpperCase().indexOf(q)<0 && r.n.toUpperCase().indexOf(q)<0) return false;
+    return true;
+  });
+}
+function sorted(rows){
+  var s=STATE.sort, a=rows.slice();
+  if(s==='ab') a.sort(function(x,y){return Math.abs(y.diff)-Math.abs(x.diff);});
+  else if(s==='pd') a.sort(function(x,y){return y.diff-x.diff;});
+  else if(s==='da') a.sort(function(x,y){return x.diff-y.diff;});
+  else if(s==='cd') a.sort(function(x,y){return x.c<y.c?-1:1;});
+  else if(s==='vd') a.sort(function(x,y){return y.vol-x.vol;});
+  return a;
+}
+function cls(d){ return d>0.05?'up':(d<-0.05?'down':''); }
+function renderList(){
+  if(!MODEL) return;
+  var rows=sorted(filtered());
+  var tb=document.getElementById('tb');
+  tb.innerHTML=rows.map(function(r){
+    var fav=FAVS.has(r.c);
+    return '<tr>'+
+      '<td class="c"><span class="fav'+(fav?' on':'')+'" data-fav="'+r.c+'">'+(fav?'★':'☆')+'</span></td>'+
+      '<td class="l"><span class="cd">'+r.c+'</span></td>'+
+      '<td class="l"><span class="nm">'+r.n+'</span></td>'+
+      '<td class="c"><span class="pill">'+(TYPE_LABEL[r.t]||r.t)+'</span></td>'+
+      '<td>'+r.nav.toFixed(2)+'</td>'+
+      '<td>'+r.p.toFixed(2)+'</td>'+
+      '<td class="'+cls(r.chg)+'">'+fmt(r.chg)+'</td>'+
+      '<td class="'+cls(r.diff)+'" style="font-weight:800">'+fmt(r.diff)+'%</td>'+
+      '<td class="c" title="'+r.sg.l+'">'+r.sg.i+'</td>'+
+      '<td class="c">'+sparkline(r.hist)+'</td>'+
+      '<td>'+r.vol.toLocaleString('en-US')+'</td>'+
+    '</tr>';
+  }).join('');
+  document.getElementById('mob').innerHTML=rows.map(function(r){
+    var fav=FAVS.has(r.c);
+    return '<div class="mrow">'+
+      '<span class="fav'+(fav?' on':'')+'" data-fav="'+r.c+'">'+(fav?'★':'☆')+'</span>'+
+      '<div class="nm"><b>'+r.n+'</b><span class="cd">'+r.c+' · '+(TYPE_LABEL[r.t]||r.t)+'</span></div>'+
+      '<div>'+sparkline(r.hist)+'</div>'+
+      '<div><div class="mbig '+cls(r.diff)+'">'+fmt(r.diff)+'%</div><div class="msub">'+r.sg.i+' 市'+r.p.toFixed(2)+' / 淨'+r.nav.toFixed(2)+'</div></div>'+
+    '</div>';
+  }).join('');
+}
+function renderAll(){ drawSummary(MODEL); drawThermo(MODEL); drawRadar(MODEL); renderList(); }
+
+/* ════ 流程：載入 → 算 → 畫 ════ */
+async function refresh(){
+  var records;
+  if(EMBED){ records=loadDemo(); STATE.source='demo'; }
+  else {
+    try{ records=await loadLive(); STATE.source='live'; }
+    catch(e){ records=loadDemo(); STATE.source='demo'; }
+  }
+  MODEL=computeAll(records); DATA=MODEL.rows;
+  var b=document.getElementById('srcbadge');
+  b.className='srcbadge '+(STATE.source==='live'?'live':'demo');
+  b.textContent=STATE.source==='live'?'LIVE':'DEMO';
+  document.getElementById('datetxt').textContent=SNAPDATE?('· '+SNAPDATE+' 收盤'):'';
+  renderAll();
+  window.__model={ source:STATE.source, count:MODEL.stats.count, thermoAvg:+MODEL.thermo.avg.toFixed(3),
+    radar:MODEL.radar, top:MODEL.rows.slice().sort(function(a,b){return b.diff-a.diff;}).slice(0,3).map(function(r){return {c:r.c,diff:+r.diff.toFixed(2)};}) };
+}
+
+/* ════ 控制 ════ */
+function setF(f){ STATE.filter=f; [].forEach.call(document.querySelectorAll('.fb'),function(b){ b.classList.toggle('on',b.dataset.f===f); }); renderList(); }
+function toast(msg){ var t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toast._t); toast._t=setTimeout(function(){t.classList.remove('show');},1500); }
+function bind(){
+  document.getElementById('themebtn').onclick=toggleDark;
+  document.getElementById('ctrl').addEventListener('click',function(e){ var b=e.target.closest('.fb'); if(b) setF(b.dataset.f); });
+  document.getElementById('q').addEventListener('input',function(e){ STATE.q=e.target.value; renderList(); });
+  document.getElementById('srt').addEventListener('change',function(e){ STATE.sort=e.target.value; renderList(); });
+  document.getElementById('summary').addEventListener('click',function(e){ var m=e.target.closest('[data-sum]'); if(m){ var i=+m.dataset.sum; if(i===1)setF('p'); if(i===2)setF('d'); } });
+  document.querySelector('table.main thead').addEventListener('click',function(e){ var th=e.target.closest('[data-s]'); if(th){ STATE.sort=th.dataset.s; document.getElementById('srt').value=th.dataset.s; renderList(); } });
+  document.body.addEventListener('click',function(e){ var f=e.target.closest('[data-fav]'); if(f){ var c=f.dataset.fav; if(FAVS.has(c))FAVS.delete(c); else FAVS.add(c); try{localStorage.setItem('etf_premium_favs',JSON.stringify([].slice.call(FAVS)));}catch(_){} renderList(); } });
+  if(EMBED) document.body.classList.add('embed');
+}
+
+/* ════ 測試鉤子 ════ */
+window.__app={
+  state:function(){return JSON.parse(JSON.stringify(STATE));},
+  model:function(){return window.__model;},
+  setFilter:function(f){setF(f);return filtered().length;},
+  recompute:function(){MODEL=computeAll(DATA);renderAll();return window.__model;}
+};
+
+/* ════ 啟動 ════ */
+bind(); refresh();
+if(!EMBED && 'serviceWorker' in navigator && location.protocol.startsWith('http'))
+  window.addEventListener('load',function(){ navigator.serviceWorker.register('../sw.js').catch(function(){}); });
+</script>
+</body>
+</html>
